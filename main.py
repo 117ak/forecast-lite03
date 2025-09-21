@@ -45,7 +45,6 @@ class PredictIn(BaseModel):
         return v
 
 def _discover_models():
-    """列出 models/ 資料夾內所有有 run_prediction 的 Python 模型"""
     items = []
     for f in sorted(glob.glob(os.path.join(MODELS_DIR, "*.py"))):
         name = os.path.splitext(os.path.basename(f))[0]
@@ -81,7 +80,6 @@ def predict(payload: PredictIn):
     if payload.symbol == "GBPUSD":
         raise HTTPException(status_code=501, detail="GBPUSD 暫不支援（外觀預覽中）")
 
-    # 取得現有模型清單
     available = _discover_models()
     if payload.model not in available:
         raise HTTPException(
@@ -101,7 +99,7 @@ def predict(payload: PredictIn):
     spec.loader.exec_module(mod)  # type: ignore
 
     # 將 dataframe 傳給 run_prediction
-    pts = mod.run_prediction(df, payload.sample_size, payload.horizon_days, payload.random_seed)
+    pts = mod.run_prediction(payload.symbol, payload.sample_size, payload.horizon_days, payload.random_seed)
     points = [{"t": t, "price": float(p)} for (t, p) in pts]
     prices = [p["price"] for p in points]
 
