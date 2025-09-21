@@ -1,5 +1,4 @@
-
-# LSTM：嘗試載入 Keras 權重，否則用均值回復樣式 fallback；優先呼叫 originals/lstm.py 的 run_prediction
+# LSTM：嘗試載入 Keras 權重，否則 fallback；優先呼叫 originals/lstm.py 的 run_prediction
 import importlib.util, os, random, datetime, math
 
 HERE = os.path.dirname(__file__)
@@ -52,15 +51,26 @@ def _call_user(symbol, sample_size, horizon_days, random_seed):
                 break
     return None
 
-def run_prediction(symbol: str, sample_size: int, horizon_days: int, random_seed: int|None=None):
-    # 先嘗試你的 originals 實作
+def run_prediction(df, sample_size, horizon_days, random_seed=None):
+    """
+    df: pandas.DataFrame
+    sample_size: int
+    horizon_days: int
+    random_seed: int|None
+    """
+    # 安全地從 df 取得 symbol 字串
+    symbol = df.get("symbol") if hasattr(df, "get") else None
+    if not isinstance(symbol, str):
+        symbol = "XAUUSD"  # 預設
+
+    # 優先呼叫 originals
     out = _call_user(symbol, sample_size, horizon_days, random_seed)
     if out: return out
 
-    # 再嘗試 keras 權重（僅對 XAUUSD）
+    # 嘗試 keras 權重（僅對 XAUUSD）
     if symbol == "XAUUSD":
         model, preprocess = _try_load_keras()
-        if model is not None and preprocess is not None:
+        if model and preprocess:
             import numpy as np
             if random_seed is not None: np.random.seed(random_seed); random.seed(random_seed)
             anchor = 2400.0
@@ -83,5 +93,5 @@ def run_prediction(symbol: str, sample_size: int, horizon_days: int, random_seed
                 out.append((t, level))
             return out
 
-    # 最後：安全 fallback
+    # 最後 fallback
     return _fallback(symbol, sample_size, horizon_days, random_seed)
