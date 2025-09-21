@@ -1,43 +1,57 @@
+# models/model_user_rf.py
+
 import random
 import pandas as pd
 
 def _fallback(symbol, sample_size, horizon_days, random_seed):
     """
-    簡單的預測 fallback 方法
-    - 確保 symbol 處理正確（避免 Series 判斷錯誤）
-    - 回傳 horizon_days 長度的 baseline 預測
+    修正過的 fallback 方法
+    確保 symbol 是單一字串，不會整個列 (Series) 去比對
     """
-    # 確保 symbol 是字串
-    if isinstance(symbol, pd.Series):
-        symbol_value = str(symbol.iloc[0])
+
+    # 如果 symbol 是 DataFrame 或 Series，取第一筆元素
+    try:
+        if isinstance(symbol, (pd.Series, pd.DataFrame)):
+            # 如果是 Series
+            symbol_value = str(symbol.iloc[0])
+        else:
+            symbol_value = str(symbol)
+    except Exception:
+        # 如果讀不到，就預設 XAUUSD
+        symbol_value = "XAUUSD"
+
+    # 比對字串
+    if symbol_value.upper() == "XAUUSD":
+        base = 2400.0
     else:
-        symbol_value = str(symbol)
+        base = 1.28
 
-    # 設定基準價格
-    base = 2400.0 if symbol_value.upper() == "XAUUSD" else 1.28
-
-    # 固定亂數種子（保證可重現）
+    # 設定 random seed
     random.seed(random_seed)
 
-    # 模擬預測結果
-    return [base + random.uniform(-5, 5) for _ in range(horizon_days)]
-
+    # 回傳一組預測值（horizon_days 長度）
+    points = []
+    for _ in range(horizon_days):
+        # 這裡你可以調整隨機範圍
+        points.append(base + random.uniform(-5, 5))
+    return points
 
 def run_prediction(df, sample_size, horizon_days, random_seed):
     """
-    預測主函數
-    - df: 使用者上傳的資料
-    - sample_size: 取樣大小
-    - horizon_days: 預測天數
-    - random_seed: 隨機種子
+    main prediction function
+    如果傳進來 df 是空或不存在，就 fallback
+    否則用 symbol 值做 fallback 預測
     """
+
     if df is None or df.empty:
         return _fallback("XAUUSD", sample_size, horizon_days, random_seed)
 
-    try:
-        # 嘗試從 df 讀取 symbol 欄位
-        symbol = df["symbol"].iloc[0] if "symbol" in df.columns else "XAUUSD"
-    except Exception:
+    # 嘗試從 df 讀 symbol 欄位
+    if "symbol" in df.columns:
+        # 擷取第一列 symbol
+        symbol = df["symbol"].iloc[0]
+    else:
         symbol = "XAUUSD"
 
     return _fallback(symbol, sample_size, horizon_days, random_seed)
+
