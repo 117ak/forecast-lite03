@@ -1,18 +1,24 @@
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 import importlib.util, os, glob, statistics, datetime
+import pandas as pd
 
-APP_DIR   = os.path.dirname(__file__)
-MODELS_DIR= os.path.join(APP_DIR, "models")
-STATIC_DIR= os.path.join(APP_DIR, "static")
+APP_DIR    = os.path.dirname(__file__)
+MODELS_DIR = os.path.join(APP_DIR, "models")
+STATIC_DIR = os.path.join(APP_DIR, "static")
+DATA_DIR   = os.path.join(APP_DIR, "data")  # 讀取資料的資料夾
 
 app = FastAPI(title="Forecast Lite", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 # 靜態檔存在才掛，避免沒有 static/ 就崩潰
 if os.path.isdir(STATIC_DIR):
@@ -34,7 +40,8 @@ class PredictIn(BaseModel):
 
     @field_validator("sample_size")
     def _ss(cls, v):
-        if v not in (300, 3000, 30000): raise ValueError("sample_size must be one of 300, 3000, 30000")
+        if v not in (300, 3000, 30000):
+            raise ValueError("sample_size must be one of 300, 3000, 30000")
         return v
 
 def _discover_models():
@@ -52,30 +59,50 @@ def _discover_models():
             continue
     return items
 
+def load_data(symbol: str) -> pd.DataFrame:
+    """從 data/ 資料夾讀取 CSV"""
+    path = os.path.join(DATA_DIR, f"{symbol}.csv")
+    if os.path.isfile(path):
+        return pd.read_csv(path)
+    else:
+        return pd.DataFrame()  # 空表避免崩潰
+
 @app.get("/health")
-def health(): return {"ok": True, "time": datetime.datetime.utcnow().isoformat()+"Z"}
+def health():
+    return {"ok": True, "time": datetime.datetime.utcnow().isoformat()+"Z"}
 
 @app.get("/models")
-def list_models(): return {"models": _discover_models()}
+def list_models():
+    return {"models": _discover_models()}
 
 @app.post("/predict")
 def predict(payload: PredictIn):
-    # 英鎊先不開放：外觀殼
     if payload.symbol == "GBPUSD":
         raise HTTPException(status_code=501, detail="GBPUSD 暫不支援（外觀預覽中）")
 
     available = _discover_models()
     if payload.model not in available:
-        raise HTTPException(status_code=400, detail=f"Model '{payload.model}' not found. Available: {available}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{payload.model}' not found. Available: {available}"
+        )
 
+    # 讀取 CSV
+    df = load_data(payload.symbol)
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"Data file for {payload.symbol} not found in data/")
+
+    # 載入模型
     mod_path = os.path.join(MODELS_DIR, f"{payload.model}.py")
     spec = importlib.util.spec_from_file_location(payload.model, mod_path)
     mod  = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore
 
-    pts = mod.run_prediction(payload.symbol, payload.sample_size, payload.horizon_days, payload.random_seed)
+    # 將 dataframe 傳給 run_prediction
+    pts = mod.run_prediction(df, payload.sample_size, payload.horizon_days, payload.random_seed)
     points = [{"t": t, "price": float(p)} for (t, p) in pts]
     prices = [p["price"] for p in points]
+
     return {
         "symbol": payload.symbol,
         "model": payload.model,
