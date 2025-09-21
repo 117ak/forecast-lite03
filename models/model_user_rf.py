@@ -12,7 +12,7 @@ def _load_user():
 
 def _fallback(symbol, sample_size, horizon_days, seed):
     if seed is not None: random.seed(seed)
-    base = 2400.0 if symbol=="XAUUSD" else 1.28
+    base = 2400.0 if symbol.iloc[0] == "XAUUSD" else 1.28
     vol  = (35.0 if symbol=="XAUUSD" else 0.006) / math.sqrt(sample_size)
     today = datetime.date.today(); level = base; out=[]
     for i in range(horizon_days):
