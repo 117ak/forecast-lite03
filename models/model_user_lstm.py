@@ -1,4 +1,3 @@
-# LSTM：嘗試載入 Keras 權重，否則 fallback；優先呼叫 originals/lstm.py 的 run_prediction
 import importlib.util, os, random, datetime, math
 
 HERE = os.path.dirname(__file__)
@@ -10,7 +9,7 @@ WEIGHTS_PATHS = [
 
 def _try_load_keras():
     try:
-        from tensorflow import keras  # type: ignore
+        from tensorflow import keras
     except Exception:
         return None, None
     weights = next((p for p in WEIGHTS_PATHS if os.path.exists(p)), None)
@@ -37,61 +36,35 @@ def _fallback(symbol, sample_size, horizon_days, seed):
         out.append((t, level))
     return out
 
-def _call_user(symbol, sample_size, horizon_days, random_seed):
-    p = os.path.join(HERE, "originals", "lstm.py")
-    if not os.path.exists(p): return None
-    spec = importlib.util.spec_from_file_location("user_lstm", p)
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)  # type: ignore
-    for fn in ("run_prediction","predict_next","forecast","main"):
-        if hasattr(m, fn):
-            try:
-                out = getattr(m, fn)(symbol, sample_size, horizon_days, random_seed)
-                if out: return [(str(t), float(p)) for (t,p) in out]
-            except Exception:
-                break
-    return None
+def run_prediction(symbol: str, sample_size: int, horizon_days: int, random_seed: int|None=None):
+    # 若 symbol 不支援 fallback
+    if symbol != "XAUUSD":
+        return _fallback(symbol, sample_size, horizon_days, random_seed)
 
-def run_prediction(df, sample_size, horizon_days, random_seed=None):
-    """
-    df: pandas.DataFrame
-    sample_size: int
-    horizon_days: int
-    random_seed: int|None
-    """
-    # 安全地從 df 取得 symbol 字串
-    symbol = df.get("symbol") if hasattr(df, "get") else None
-    if not isinstance(symbol, str):
-        symbol = "XAUUSD"  # 預設
+    # 嘗試 keras 權重
+    model, preprocess = _try_load_keras()
+    if model is not None and preprocess is not None:
+        import numpy as np
+        if random_seed is not None: np.random.seed(random_seed); random.seed(random_seed)
+        anchor = 2400.0
+        sigma = (28.0 / (sample_size ** 0.5)) * 0.2
+        series = [anchor + random.gauss(0.0, sigma) for _ in range(48)]
+        today = datetime.date.today(); out=[]
+        level = series[-1]
+        for i in range(horizon_days):
+            x = preprocess(series, lookback=48)
+            yhat = model.predict(x, verbose=0)
+            val = float(yhat.reshape(-1)[0])
+            if 0.0 <= val <= 1.0:
+                val = anchor*(0.98 + 0.04*val)
+            if abs(val) < 10:
+                level = max(0.0, level + val)
+            else:
+                level = max(0.0, val)
+            series.append(level)
+            t = datetime.datetime.combine(today+datetime.timedelta(days=i+1), datetime.time()).isoformat()+"Z"
+            out.append((t, level))
+        return out
 
-    # 優先呼叫 originals
-    out = _call_user(symbol, sample_size, horizon_days, random_seed)
-    if out: return out
-
-    # 嘗試 keras 權重（僅對 XAUUSD）
-    if symbol == "XAUUSD":
-        model, preprocess = _try_load_keras()
-        if model and preprocess:
-            import numpy as np
-            if random_seed is not None: np.random.seed(random_seed); random.seed(random_seed)
-            anchor = 2400.0
-            sigma = (28.0 / (sample_size ** 0.5)) * 0.2
-            series = [anchor + random.gauss(0.0, sigma) for _ in range(48)]
-            today = datetime.date.today(); out=[]
-            level = series[-1]
-            for i in range(horizon_days):
-                x = preprocess(series, lookback=48)
-                yhat = model.predict(x, verbose=0)
-                val = float(yhat.reshape(-1)[0])
-                if 0.0 <= val <= 1.0:
-                    val = anchor*(0.98 + 0.04*val)
-                if abs(val) < 10:
-                    level = max(0.0, level + val)
-                else:
-                    level = max(0.0, val)
-                series.append(level)
-                t = datetime.datetime.combine(today+datetime.timedelta(days=i+1), datetime.time()).isoformat()+"Z"
-                out.append((t, level))
-            return out
-
-    # 最後 fallback
+    # fallback
     return _fallback(symbol, sample_size, horizon_days, random_seed)
